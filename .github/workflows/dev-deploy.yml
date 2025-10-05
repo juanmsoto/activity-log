@@ -1,0 +1,74 @@
+name: CI Dev Deployment
+on:
+  push:
+    branches: [ master ]
+
+permissions:
+  contents: write  # necesario para crear releases
+
+jobs:
+  build:
+    name: Build artifact
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pkgver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Tests (optional)
+        run: npm test --if-present
+
+      - name: Build (fallback si no hay script build)
+        run: |
+          npm run build --if-present
+          zip -r build.zip .
+
+      - name: Get package version (or fallback)
+        id: pkgver
+        run: |
+          v=$(node -p "try{require('./package.json').version}catch(e){'0.0.0'}")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
+
+  deploy-dev:
+    name: Release to dev
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Compute metadata from environment vars
+        id: meta
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          TAG="${{ vars.BUILD_TAG }}"
+          NOTE="${{ vars.RELEASE_NOTE }}"
+          if [ -z "$TAG" ]; then TAG="dev-v$VERSION"; fi
+          if [ -z "$NOTE" ]; then NOTE="Dev auto release"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "note=$NOTE" >> "$GITHUB_OUTPUT"
+
+      - name: Release Dev Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.meta.outputs.tag }}" build.zip --notes "${{ steps.meta.outputs.note }}"
