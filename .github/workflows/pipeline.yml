@@ -7,67 +7,108 @@ permissions:
 
 jobs:
   build:
+    name: Build once
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.pkgver.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm install --no-audit --no-fund || true
-      - run: npm test --if-present || true
-      - run: |
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (no lockfile required)
+        run: npm install --no-audit --no-fund || true
+
+      - name: Tests (optional)
+        run: npm test --if-present || true
+
+      - name: Build artifact
+        run: |
           npm run build --if-present || true
           zip -r build.zip .
-      - id: pkgver
+
+      - name: Determine version
+        id: pkgver
         run: |
           v=$(node -p "try{require('./package.json').version}catch(e){'1.0.0'}")
           echo "version=$v" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with: { name: build-artifact, path: build.zip }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: build.zip
 
   deploy-staging:
+    name: Deploy to staging
     needs: build
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: build-artifact }
-      - id: meta
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Compute metadata
+        id: meta
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          ENV_TAG: ${{ vars.BUILD_TAG }}
+          ENV_NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          TAG="${{ vars.BUILD_TAG || '' }}"
-          NOTE="${{ vars.RELEASE_NOTE || '' }}"
-          [ -z "$TAG" ] && TAG="staging-v$VERSION"
-          [ -z "$NOTE" ] && NOTE="Testing pre-production release"
+          TAG="$ENV_TAG"
+          NOTE="$ENV_NOTE"
+          if [ -z "$TAG" ]; then TAG="staging-v${VERSION}"; fi
+          if [ -z "$NOTE" ]; then NOTE="Testing pre-production release"; fi
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "note=$NOTE" >> "$GITHUB_OUTPUT"
+
       - name: Recreate staging release
-        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete "${{ steps.meta.outputs.tag }}" -y || true
           gh release create "${{ steps.meta.outputs.tag }}" build.zip --notes "${{ steps.meta.outputs.note }}"
 
   deploy-production:
+    name: Deploy to production (requires approval)
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment: production   # ← disparará la aprobación por reviewers
+    environment: production   # ← enforce reviewers/approval desde Settings→Environments
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: build-artifact }
-      - id: meta
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Compute metadata
+        id: meta
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          ENV_TAG: ${{ vars.BUILD_TAG }}
+          ENV_NOTE: ${{ vars.RELEASE_NOTE }}
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          TAG="${{ vars.BUILD_TAG || '' }}"
-          NOTE="${{ vars.RELEASE_NOTE || '' }}"
-          [ -z "$TAG" ] && TAG="prod-v$VERSION"
-          [ -z "$NOTE" ] && NOTE="Production release"
+          TAG="$ENV_TAG"
+          NOTE="$ENV_NOTE"
+          if [ -z "$TAG" ]; then TAG="prod-v${VERSION}"; fi
+          if [ -z "$NOTE" ]; then NOTE="Production release"; fi
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "note=$NOTE" >> "$GITHUB_OUTPUT"
+
       - name: Recreate prod release
-        env: { GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete "${{ steps.meta.outputs.tag }}" -y || true
           gh release create "${{ steps.meta.outputs.tag }}" build.zip --notes "${{ steps.meta.outputs.note }}"
