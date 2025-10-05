@@ -20,8 +20,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          
-      - name: Install (no-lockfile friendly)
+
+      - name: Install deps (no lockfile required)
         run: npm install --no-audit --no-fund || true
 
       - name: Tests (optional)
@@ -50,6 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
@@ -61,13 +66,21 @@ jobs:
           VERSION="${{ needs.build.outputs.version }}"
           TAG="${{ vars.BUILD_TAG }}"
           NOTE="${{ vars.RELEASE_NOTE }}"
-          if [ -z "$TAG" ]; then TAG="dev-v$VERSION"; fi
-          if [ -z "$NOTE" ]; then NOTE="Dev auto release"; fi
+          [ -z "$TAG" ] && TAG="dev-v$VERSION"
+          [ -z "$NOTE" ] && NOTE="Dev auto release"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "note=$NOTE" >> "$GITHUB_OUTPUT"
 
+      - name: Remove existing release if present
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+            gh release delete "${{ steps.meta.outputs.tag }}" -y
+          fi
+
       - name: Release Dev Build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.meta.outputs.tag }}" build.zip --notes "${{ steps.meta.outputs.note }}"
