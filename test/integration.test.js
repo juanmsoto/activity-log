@@ -1,14 +1,17 @@
+// test/integration.test.js
 import assert from 'node:assert';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 
-assert.ok(existsSync('./dist/index.js'), 'dist/index.js no existe');
+// 1) Verifica que el build exista
+assert.ok(existsSync('./dist/index.js'), 'dist/index.js does not exists');
+assert.ok(statSync('./dist/index.js').size > 0, 'dist/index.js is empty');
 
-// Mock de inputs requeridos por la Action:
+// 2) Mockea TODOS los inputs requeridos por la action antes del import
 process.env['INPUT_GITHUB_USERNAME'] = 'dummy-user';
-// agrega otros si tu acción los requiere, p.ej.:
-// process.env['INPUT_GITHUB_TOKEN'] = 'dummy-token';
+process.env['INPUT_GITHUB_TOKEN'] = 'dummy-token';
 
-const mod = await import('../dist/index.js'); // ahora no debería lanzar
+// 3) Ahora importa el bundle
+const mod = await import('../dist/index.js');
 assert.ok(mod, 'No se pudo importar dist/index.js');
 
-console.log('✅ integration (import con inputs mock)');
+console.log('✅ integration');
