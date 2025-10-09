@@ -74,7 +74,7 @@ jobs:
 
   deploy-dev:
     name: Release to dev
-    needs: build
+    needs: test
     runs-on: ubuntu-latest
     environment: dev
     steps:
