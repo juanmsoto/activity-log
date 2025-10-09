@@ -43,6 +43,34 @@ jobs:
         with:
           name: build-artifact
           path: build.zip
+  test:
+    name: Run tests on built artifact
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (tests necesitan el repo para leer package.json/test/)
+        uses: actions/checkout@v4
+
+      - name: Download artifact (trae dist/ desde el build.zip)
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Unzip artifact into workspace
+        run: unzip -o build.zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (si tu test los requiere; aquí no usamos dependencias externas)
+        run: npm install --no-audit --no-fund || true
+
+      - name: Run Automated Tests
+        run: |
+          echo "🔎 Running tests..."
+          npm test || (echo "❌ Tests failed" && exit 1)
 
   deploy-dev:
     name: Release to dev
