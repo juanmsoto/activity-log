@@ -5,6 +5,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build once
@@ -19,12 +23,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install deps (no lockfile required)
         run: npm install --no-audit --no-fund || true
 
-      - name: Tests (optional)
-        run: npm test --if-present || true
+      
+      - name: Lint (optional)
+        run: npm run lint --if-present || true
 
       - name: Build artifact
         run: |
@@ -43,13 +49,95 @@ jobs:
           name: build-artifact
           path: build.zip
 
+  test-unit:
+    name: Unit tests (gate #1)
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TEST_ENV: staging
+    steps:
+      - name: Checkout (for test files)
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Unzip artifact
+        run: unzip -o build.zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (if tests need them)
+        run: npm install --no-audit --no-fund || true
+
+      - name: Run Unit Tests
+        run: |
+          echo "🔎 UNIT (TEST_ENV=$TEST_ENV)"
+          # Intenta script del proyecto; si no, fallback a Node Test Runner
+          if npm run -s test:unit; then
+            echo "✅ npm run test:unit passed"
+          else
+            if [ -f test/smoke.test.js ]; then
+              node --test test/smoke.test.js
+            else
+              echo "❌ No unit tests found (add test/smoke.test.js or a test:unit script)"
+              exit 1
+            fi
+          fi
+
+  test-integration:
+    name: Integration tests (gate #2)
+    needs: test-unit
+    runs-on: ubuntu-latest
+    env:
+      TEST_ENV: staging
+    steps:
+      - name: Checkout (for test files)
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+
+      - name: Unzip artifact
+        run: unzip -o build.zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (if tests need them)
+        run: npm install --no-audit --no-fund || true
+
+      - name: Run Integration Tests (must see dist/)
+        run: |
+          echo "🔎 INTEGRATION (TEST_ENV=$TEST_ENV)"
+          # Intenta script del proyecto; si no, fallback a Node Test Runner
+          if npm run -s test:integration; then
+            echo "✅ npm run test:integration passed"
+          else
+            if [ -f test/integration.test.js ]; then
+              node --test test/integration.test.js
+            else
+              echo "❌ No integration tests found (add test/integration.test.js or a test:integration script)"
+              exit 1
+            fi
+          fi
+
   deploy-staging:
     name: Deploy to staging
-    needs: build
+    needs: test-integration
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: Checkout
+      - name: Checkout (optional)
         uses: actions/checkout@v4
 
       - name: Download artifact
@@ -71,7 +159,7 @@ jobs:
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "note=$NOTE" >> "$GITHUB_OUTPUT"
 
-      - name: Recreate staging release
+      - name: Recreate staging release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -82,9 +170,9 @@ jobs:
     name: Deploy to production (requires approval)
     needs: deploy-staging
     runs-on: ubuntu-latest
-    environment: production   # ← enforce reviewers/approval desde Settings→Environments
+    environment: production
     steps:
-      - name: Checkout
+      - name: Checkout (optional)
         uses: actions/checkout@v4
 
       - name: Download artifact
@@ -106,7 +194,7 @@ jobs:
           echo "tag=$TAG"  >> "$GITHUB_OUTPUT"
           echo "note=$NOTE" >> "$GITHUB_OUTPUT"
 
-      - name: Recreate prod release
+      - name: Recreate prod release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
